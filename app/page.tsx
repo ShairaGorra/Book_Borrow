@@ -64,6 +64,7 @@ export default function BookRentalApp() {
   const [isOwner, setIsOwner] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [pinInput, setPinInput] = useState('');
 
   // New Book Form State
@@ -72,6 +73,14 @@ export default function BookRentalApp() {
   const [newCategory, setNewCategory] = useState('Action');
   const [newCoverUrl, setNewCoverUrl] = useState('');
   const [newDescription, setNewDescription] = useState('');
+
+  // Edit Book Form State
+  const [editBookId, setEditBookId] = useState('');
+  const [editTitle, setEditTitle] = useState('');
+  const [editAuthor, setEditAuthor] = useState('');
+  const [editCategory, setEditCategory] = useState('Action');
+  const [editCoverUrl, setEditCoverUrl] = useState('');
+  const [editDescription, setEditDescription] = useState('');
 
   useEffect(() => {
     setCurrentYear(new Date().getFullYear());
@@ -113,17 +122,15 @@ export default function BookRentalApp() {
     setShowBorrowModal(true);
   }
 
-  // Confirm Rental with Borrower Name (Fixed with full refetch sync)
+  // Confirm Rental with Borrower Name
   async function confirmRental(e: React.FormEvent) {
     e.preventDefault();
     if (!borrowerName.trim() || !bookToRent) return alert('Please enter the borrower name.');
     setLoading(true);
 
-    // Calculate due date (7 days from now)
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + 7);
 
-    // 1. Update book availability to 0 in Supabase
     const { error: bookError } = await supabase
       .from('books')
       .update({ available_copies: 0 })
@@ -135,7 +142,6 @@ export default function BookRentalApp() {
       return;
     }
 
-    // 2. Insert into rentals log table
     const { error: rentalError } = await supabase.from('rentals').insert([
       {
         book_id: bookToRent.id,
@@ -153,7 +159,6 @@ export default function BookRentalApp() {
       setShowBorrowModal(false);
       setSelectedBook(null);
 
-      // Refresh data from Supabase to guarantee state sync across catalog and rentals
       await fetchBooks();
       await fetchRentals();
     }
@@ -164,7 +169,6 @@ export default function BookRentalApp() {
   async function handleReturnBook(rental: Rental) {
     setLoading(true);
 
-    // 1. Mark rental as returned
     const { error: rentalError } = await supabase
       .from('rentals')
       .update({ returned: true })
@@ -176,7 +180,6 @@ export default function BookRentalApp() {
       return;
     }
 
-    // 2. Restock the book copy back to 1
     const { error: bookError } = await supabase
       .from('books')
       .update({ available_copies: 1 })
@@ -188,6 +191,63 @@ export default function BookRentalApp() {
       alert(`"${rental.book_title}" has been returned and restocked!`);
       await fetchBooks();
       await fetchRentals();
+    }
+    setLoading(false);
+  }
+
+  // Librarian Delete Book
+  async function handleDeleteBook(bookId: string) {
+    if (!confirm('Are you sure you want to permanently remove this book from the library?')) return;
+    setLoading(true);
+
+    const { error } = await supabase.from('books').delete().eq('id', bookId);
+
+    if (error) {
+      alert('Error removing book: ' + error.message);
+    } else {
+      alert('Book removed successfully.');
+      setSelectedBook(null);
+      await fetchBooks();
+      await fetchRentals();
+    }
+    setLoading(false);
+  }
+
+  // Open Edit Modal with existing data
+  function openEditModal(book: Book) {
+    setEditBookId(book.id);
+    setEditTitle(book.title);
+    setEditAuthor(book.author);
+    setEditCategory(book.category || 'Action');
+    setEditCoverUrl(book.cover_url || '');
+    setEditDescription(book.description || '');
+    setSelectedBook(null);
+    setShowEditModal(true);
+  }
+
+  // Save Edited Book (Explicitly omits ratings so ratings are never touched)
+  async function handleUpdateBook(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editTitle || !editAuthor) return alert('Please enter both the book title and author.');
+
+    setLoading(true);
+    const { error } = await supabase
+      .from('books')
+      .update({
+        title: editTitle,
+        author: editAuthor,
+        category: editCategory,
+        cover_url: editCoverUrl.trim() || '',
+        description: editDescription || 'No synopsis provided yet.',
+      })
+      .eq('id', editBookId);
+
+    if (error) {
+      alert('Error updating book: ' + error.message);
+    } else {
+      alert('Book updated successfully!');
+      setShowEditModal(false);
+      await fetchBooks();
     }
     setLoading(false);
   }
@@ -222,7 +282,7 @@ export default function BookRentalApp() {
         title: newTitle,
         author: newAuthor,
         category: newCategory,
-        cover_url: newCoverUrl.trim() || 'https://covers.openlibrary.org/b/isbn/9780439023481-L.jpg',
+        cover_url: newCoverUrl.trim() || '',
         description: newDescription || 'No synopsis provided yet.',
         rating: 0,
         rating_count: 0,
@@ -460,7 +520,7 @@ export default function BookRentalApp() {
           <>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
-                {selectedCategory === 'All' ? 'Complete 100-Title Library' : `${selectedCategory}`}
+                {selectedCategory === 'All' ? 'Complete Library' : `${selectedCategory}`}
               </h2>
               <span className="text-xs font-semibold text-slate-500">
                 {filteredBooks.length} {filteredBooks.length === 1 ? 'title' : 'titles'} (Single Copy)
@@ -469,7 +529,7 @@ export default function BookRentalApp() {
 
             {filteredBooks.length === 0 ? (
               <div className="bg-white border border-blue-100 rounded-2xl p-12 text-center shadow-xs">
-                <p className="text-sm font-bold text-slate-700">No books found in this genre.</p>
+                <p className="text-sm font-bold text-slate-700">No books found in this category.</p>
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 sm:gap-6">
@@ -482,11 +542,20 @@ export default function BookRentalApp() {
                       className="group bg-white rounded-2xl border border-slate-200/80 overflow-hidden shadow-xs hover:shadow-md hover:border-blue-300 transition-all flex flex-col cursor-pointer"
                     >
                       <div className="relative aspect-[3/4] w-full bg-slate-900 overflow-hidden">
-                        <img
-                          src={book.cover_url}
-                          alt={book.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
+                        {book.cover_url && book.cover_url.trim() !== '' ? (
+                          <img
+                            src={book.cover_url}
+                            alt={book.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-slate-800 flex flex-col items-center justify-center p-4 text-center text-slate-300 group-hover:scale-105 transition-transform duration-300">
+                            <span className="text-3xl mb-1">📖</span>
+                            <span className="text-xs font-bold line-clamp-2 px-2 text-white">
+                              {book.title}
+                            </span>
+                          </div>
+                        )}
 
                         <div className="absolute top-2.5 left-2.5">
                           <span
@@ -727,16 +796,38 @@ export default function BookRentalApp() {
                 </div>
               </div>
 
-              <button
-                disabled={loading || selectedBook.available_copies <= 0}
-                onClick={() => {
-                  setSelectedBook(null);
-                  handleRentClick(selectedBook);
-                }}
-                className="w-full py-3 rounded-xl text-sm font-extrabold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/20 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none transition-all cursor-pointer"
-              >
-                {selectedBook.available_copies > 0 ? 'Rent This Book' : 'Currently Rented Out'}
-              </button>
+              <div className="flex flex-col gap-2 pt-2">
+                <button
+                  disabled={loading || selectedBook.available_copies <= 0}
+                  onClick={() => {
+                    const b = selectedBook;
+                    setSelectedBook(null);
+                    handleRentClick(b);
+                  }}
+                  className="w-full py-3 rounded-xl text-sm font-extrabold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/20 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none transition-all cursor-pointer"
+                >
+                  {selectedBook.available_copies > 0 ? 'Rent This Book' : 'Currently Rented Out'}
+                </button>
+
+                {isOwner && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <button
+                      disabled={loading}
+                      onClick={() => openEditModal(selectedBook)}
+                      className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors cursor-pointer"
+                    >
+                      Edit Book Details
+                    </button>
+                    <button
+                      disabled={loading}
+                      onClick={() => handleDeleteBook(selectedBook.id)}
+                      className="px-4 py-2.5 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-colors cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -797,7 +888,7 @@ export default function BookRentalApp() {
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700">Cover Image URL (Optional)</label>
+                <label className="text-xs font-bold text-slate-700">Cover Image URL (Optional - leave blank for empty cover)</label>
                 <input
                   type="url"
                   value={newCoverUrl}
@@ -832,6 +923,99 @@ export default function BookRentalApp() {
                   className="px-5 py-2 text-xs font-bold rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
                 >
                   Publish Book
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Book Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-blue-100 rounded-2xl max-w-md w-full p-6 flex flex-col gap-4 shadow-2xl">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <h2 className="text-base font-extrabold text-blue-700">Edit Book Details</h2>
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="text-slate-400 hover:text-slate-700 font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateBook} className="flex flex-col gap-3">
+              <div>
+                <label className="text-xs font-bold text-slate-700">Book Title *</label>
+                <input
+                  type="text"
+                  required
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700">Author / Creator *</label>
+                <input
+                  type="text"
+                  required
+                  value={editAuthor}
+                  onChange={(e) => setEditAuthor(e.target.value)}
+                  className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700">Genre</label>
+                <select
+                  value={editCategory}
+                  onChange={(e) => setEditCategory(e.target.value)}
+                  className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-blue-500"
+                >
+                  {CATEGORIES.filter((c) => c !== 'All').map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700">Cover Image URL</label>
+                <input
+                  type="url"
+                  value={editCoverUrl}
+                  onChange={(e) => setEditCoverUrl(e.target.value)}
+                  className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700">Description / Synopsis</label>
+                <textarea
+                  rows={3}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-blue-500 resize-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2 text-xs font-bold rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+                >
+                  Save Changes
                 </button>
               </div>
             </form>
